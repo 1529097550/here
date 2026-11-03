@@ -15,7 +15,7 @@ DTB_FILE ?= $(EMU_DIR)/dts/virt.dtb
 LINUX_IMAGE ?= $(LINUX_DIR)/arch/riscv/boot/Image
 FW_BIN ?= $(OPENSBI_DIR)/build/platform/generic/firmware/fw_payload.bin
 
-.PHONY: check build-dtb build-linux build-opensbi linux-qemu linux-qemu-gdb linux linux-debug linux-gdb
+.PHONY: check build-dtb build-linux build-opensbi linux-qemu linux-qemu-gdb linux linux-debug linux-gdb isa-tests
 
 check:
 	@test -n "$(LINUX_DIR)" || (echo "error: LINUX_DIR is empty. set env LINUX_DIR=... or run make LINUX_DIR=..."; exit 1)
@@ -53,3 +53,9 @@ linux-debug: build-opensbi
 
 linux-gdb: build-opensbi
 	cargo run --release -- "$(FW_BIN)" --dtb "$(DTB_FILE)" --dtb-address "$(FW_PAYLOAD_FDT_ADDR)" -G $(RVEMU_ARGS)
+
+# Batch-run riscv-tests isa suite on the emulator (tohost exit-code based).
+# Override groups/ISA via e.g. `make isa-tests ISA_ARGS="rv64ui rv64mi"`.
+isa-tests:
+	cargo build --release --bin here
+	./scripts/run_isa_tests.sh -j $(JOBS) $(ISA_ARGS)

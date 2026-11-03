@@ -18,6 +18,7 @@ use here::{
     DeviceConfig,
     board::virt::{MemoryImage, UartIoMode, VirtBoard, VirtBoardConfig},
     config::arch_config::WordType,
+    load::ELFLoader,
 };
 
 use crate::{logging::LogLevel, welcome::display_welcome_message};
@@ -352,9 +353,20 @@ fn build_board(args: &Args) -> VirtBoard {
             VirtBoard::from_binary_with(&bytes, board_config).expect("Binary load failed")
         }
 
-        _ => {
-            log::error!("Format is not supported at present.");
-            panic!();
+        (TargetFormat::Auto, _) => {
+            // Unknown extension: sniff the content, try ELF first, then raw binary.
+            let bytes = std::fs::read(args.path.clone()).expect("Failed to read target file");
+            if ELFLoader::try_new(bytes.clone()).is_some() {
+                if args.verbose {
+                    println!("ELF file detected\r");
+                }
+                VirtBoard::from_elf_with(bytes, board_config).expect("ELF load failed")
+            } else {
+                if args.verbose {
+                    println!("Binary file detected\r");
+                }
+                VirtBoard::from_binary_with(&bytes, board_config).expect("Binary load failed")
+            }
         }
     }
 }
@@ -396,29 +408,92 @@ fn run_rvdb(board: VirtBoard, args: &Args, interactive: bool) {
     }
 }
 
-fn run_normal(mut board: VirtBoard, args: &Args) {
+/// Run a bare-metal payload that signals completion via the HTIF `tohost` symbol
+/// (e.g. riscv-tests). The test writes `1` on pass or `(testnum << 1) | 1` on
+/// failure and then spins forever, so the emulator must poll for it.
+/// Maps the result to a process exit code: 0 = passed, 1 = failed, 124 = timeout.
+fn run_tohost_polling(board: &mut VirtBoard, tohost_addr: WordType, max_cycles: u64) -> i32 {
+    const TOHOST_POLL_INTERVAL: u64 = 4096;
+    let max_cycles = if max_cycles == 0 {
+        u64::MAX
+    } else {
+        max_cycles
+    };
+
+    loop {
+        board.run_cycles(TOHOST_POLL_INTERVAL);
+
+        let msg = board
+            .cpu
+            .read_memory::<u64>(Address::Phys(tohost_addr))
+            .unwrap_or(0);
+        if msg == 1 {
+            println!("\r\nPASSED\r");
+            return 0;
+        }
+        if msg != 0 {
+            println!("\r\nFAILED (testnum={})\r", msg >> 1);
+            return 1;
+        }
+
+        if board.status() == here::board::BoardStatus::Halt {
+            println!("\r\nFAILED (halted before writing tohost)\r");
+            return 1;
+        }
+
+        if board.cycles() >= max_cycles {
+            log::error!(
+                "Max cycles reached: {} at pc 0x{:x}\r",
+                max_cycles,
+                board.cpu().read_pc()
+            );
+            println!(
+                "\r\nTIMEOUT after {} cycles at pc 0x{:x}\r",
+                max_cycles,
+                board.cpu().read_pc()
+            );
+            return 124;
+        }
+    }
+}
+
+fn run_normal(mut board: VirtBoard, args: &Args) -> i32 {
     if let Some(sig_path) = &args.signature {
         // Create the signature file first to ensure file exists even if the emulator crashes.
         fs::File::create(sig_path).expect("Failed to create signature file");
     }
 
-    if args.max_cycles == 0 {
-        board.run();
-    } else {
-        board.run_cycles(args.max_cycles);
-        if board.status() != here::board::BoardStatus::Halt {
-            log::error!(
-                "Max cycles reached: {} at pc 0x{:x}\r",
-                args.max_cycles,
-                board.cpu().read_pc()
-            );
+    // Bare-metal test payloads exit via the HTIF tohost symbol; without polling
+    // they would spin forever after finishing.
+    let exit_code = match board
+        .loader()
+        .and_then(|loader| loader.get_section_addr(".tohost"))
+    {
+        Some(tohost_addr) => run_tohost_polling(&mut board, tohost_addr, args.max_cycles),
+        None => {
+            if args.max_cycles == 0 {
+                board.run();
+            } else {
+                board.run_cycles(args.max_cycles);
+                if board.status() != here::board::BoardStatus::Halt {
+                    log::error!(
+                        "Max cycles reached: {} at pc 0x{:x}\r",
+                        args.max_cycles,
+                        board.cpu().read_pc()
+                    );
+                }
+            }
+            0
         }
-    }
+    };
+
     if let Some(sig_path) = &args.signature {
         if let Err(e) = dump_signature(&mut board, sig_path.as_path(), args.signature_granularity) {
             log::error!("Failed to dump signature: {}", e);
         }
     }
+
+    exit_code
 }
 
 fn main() {
@@ -442,12 +517,21 @@ fn main() {
 
     let board = build_board(&cli_args);
 
-    let raw_mode_guard = RawModeGuard::new();
+    // Raw mode is only meaningful (and only succeeds) on real terminals; batch
+    // runs must not fail here.
+    let raw_mode_guard = if stdin_terminal && stdout_terminal {
+        Some(RawModeGuard::new())
+    } else {
+        None
+    };
     let now = Instant::now();
 
     match mode {
         Mode::Normal => {
-            run_normal(board, &cli_args);
+            let exit_code = run_normal(board, &cli_args);
+            drop(raw_mode_guard);
+            println!("Used time: {:.6}s", now.elapsed().as_secs_f32());
+            std::process::exit(exit_code);
         }
         Mode::Rvdb { interactive } => {
             run_rvdb(board, &cli_args, interactive);
