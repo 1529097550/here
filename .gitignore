@@ -28,3 +28,7 @@ __pycache__/
 
 perf.data
 flamegraph.svg
+
+# local experiment assets not for the repo
+.trae/
+test_resources/riscv-tests/
