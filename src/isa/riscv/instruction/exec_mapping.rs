@@ -316,7 +316,28 @@ pub(in crate::isa::riscv) fn get_exec_func(
         // RV_Custom
         //---------------------------------------
         #[cfg(feature = "custom-instr")]
-        RiscvInstr::MY_INSTR0_R => todo!(),
+        RiscvInstr::PADD8 => |info, cpu| {
+            super::normal_exec(cpu, |cpu| {
+                if let RVInstrInfo::R { rs1, rs2, rd } = info {
+                    let (a, b) = cpu.reg_file.read(rs1, rs2);
+                    // packed SIMD: 低 32 位按 4 条 8-bit 泳道独立相加，进位不跨泳道
+                    let mut sum = 0u64;
+                    for i in 0..4 {
+                        let lane = ((a >> (8 * i)) as u8).wrapping_add((b >> (8 * i)) as u8) as u64;
+                        sum |= lane << (8 * i);
+                    }
+                    log::info!(
+                        "[Custom-Instr] PADD8 rd=x{}, rs1=x{}, rs2=x{} -> {:#x}",
+                        rd,
+                        rs1,
+                        rs2,
+                        sum
+                    );
+                    cpu.reg_file.write(rd, sum);
+                }
+                Ok(())
+            })
+        },
         #[cfg(feature = "custom-instr")]
         RiscvInstr::MY_INSTR1_DISPLAY => |info, cpu| {
             if let RVInstrInfo::I { rs1: _, rd: _, imm } = info {

@@ -931,3 +931,20 @@ fn test_vector_config() {
         },
     );
 }
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_padd8() {
+    // padd8 x3, x1, x2
+    // 编码: funct7=0000000 | rs2=00010 | rs1=00001 | funct3=000 | rd=00011 | opcode=0001011
+    let mut cpu = TestCPUBuilder::new().mem_base(0, 0x0020_818b_u32).build();
+
+    cpu.reg_file[1] = 0x1122_3344;
+    cpu.reg_file[2] = 0x5566_7788;
+    cpu.step_batch(1);
+
+    // 每条 8-bit 泳道独立相加（进位不跨泳道）:
+    // 0x44+0x88=0xCC, 0x33+0x77=0xAA, 0x22+0x66=0x88, 0x11+0x55=0x66
+    assert_eq!(cpu.reg_file[3], 0x6688_aacc);
+    assert_eq!(cpu.pc, ram_config::BASE_ADDR + 4);
+}
