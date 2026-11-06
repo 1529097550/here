@@ -948,3 +948,51 @@ fn test_padd8() {
     assert_eq!(cpu.reg_file[3], 0x6688_aacc);
     assert_eq!(cpu.pc, ram_config::BASE_ADDR + 4);
 }
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_padd8_decode_and_exec() {
+    // 构造 padd8 x3, x1, x2 的机器码
+    // funct7=0, rs1=1, rs2=2, funct3=0, rd=3, opcode=0x0B
+    // 0000000_00010_00001_000_00011_0001011 = 0x0020818B
+    run_test_exec_decode(
+        0x0020818B,
+        |builder| builder.reg(1, 0x01020304).reg(2, 0x05060708).pc(0x80000000),
+        |checker| checker.reg(3, 0x06080A0C).pc(0x80000004),
+    );
+}
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_psub8_decode_and_exec() {
+    // psub8 x3, x1, x2: funct7=1 -> 0x0220818B
+    // 0x44-0x08=0x3C, 0x33-0x07=0x2C, 0x22-0x06=0x1C, 0x11-0x05=0x0C
+    run_test_exec_decode(
+        0x0220818B,
+        |builder| builder.reg(1, 0x11223344).reg(2, 0x05060708).pc(0x80000000),
+        |checker| checker.reg(3, 0x0C1C2C3C).pc(0x80000004),
+    );
+}
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_padd16_decode_and_exec() {
+    // padd16 x3, x1, x2: funct3=1 -> 0x0020918B
+    // 低 16 位: 0x0002+0x0004=0x0006, 高 16 位: 0x0001+0x0003=0x0004
+    run_test_exec_decode(
+        0x0020918B,
+        |builder| builder.reg(1, 0x00010002).reg(2, 0x00030004).pc(0x80000000),
+        |checker| checker.reg(3, 0x00040006).pc(0x80000004),
+    );
+}
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_psub16_decode_and_exec() {
+    // psub16 x3, x1, x2: funct7=1, funct3=1 -> 0x0220918B
+    // 泳道内回绕: 0x0001-0x0003=0xFFFE（借位不跨泳道）
+    run_test_exec_decode(
+        0x0220918B,
+        |builder| builder.reg(1, 0x00020001).reg(2, 0x00040003).pc(0x80000000),
+        |checker| checker.reg(3, 0xFFFEFFFE).pc(0x80000004),
+    );
+}
