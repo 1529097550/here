@@ -32,7 +32,7 @@ RV_LD_PROMPT := RV_LD
 RV_DUMP_PROMPT := RV_DUMP
 RV_OBJCOPY_PROMPT := RV_OBJCOPY
 
-TARGETS += main fib prime matrix_mul vector_kernels io_bench trap_test virtio_blk_test ecall_test interrupt_test float clint uart_interrupt_test custom_padd8 guess
+TARGETS += main fib prime matrix_mul vector_kernels io_bench trap_test virtio_blk_test virtio_rng_test ecall_test interrupt_test float clint uart_interrupt_test custom_padd8 guess
 TARGETS += monitor
 # 双核 litmus 实验：链接时不带 boot.o/trap.o（litmus 自带 _start 与多核入口）
 TARGETS += litmus_mp litmus_mp_fence litmus_sb litmus_sb_fence

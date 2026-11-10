@@ -54,10 +54,17 @@ impl FromStr for DeviceConfig {
         let dev_type = match parts.next() {
             Some("virtio-block") => VirtIODeviceEnum::VirtIOBlock,
             Some("virtio-network") => VirtIODeviceEnum::VirtIONet,
+            Some("virtio-rng") => VirtIODeviceEnum::VirtIORng,
             Some(other) => return Err(format!("Unknown device type: {}", other)),
             None => return Err("Invalid device arguments.".into()),
         };
-        let path = PathBuf::from(parts.next().ok_or("Need input a device path.")?);
+        // The entropy source device has no backing host resource; a path is
+        // only required for the other device types.
+        let path = match parts.next() {
+            Some(p) => PathBuf::from(p),
+            None if dev_type == VirtIODeviceEnum::VirtIORng => PathBuf::new(),
+            None => return Err("Need input a device path.".into()),
+        };
         Ok(DeviceConfig { dev_type, path })
     }
 }
