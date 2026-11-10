@@ -1054,3 +1054,36 @@ fn test_custom_padd8_pipeline_step() {
         },
     );
 }
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_packed_family_boundaries() {
+    // padd8 全 1：每条泳道 0xFF+0xFF=0x1FE 截断为 0xFE，进位不跨泳道
+    run_test_exec_decode(
+        0x0020818B,
+        |builder| builder.reg(1, 0xFFFF_FFFF).reg(2, 0xFFFF_FFFF),
+        |checker| checker.reg(3, 0xFEFE_FEFE),
+    );
+
+    // psub8 全 0：结果恒为 0
+    run_test_exec_decode(
+        0x0220818B,
+        |builder| builder.reg(1, 0).reg(2, 0),
+        |checker| checker.reg(3, 0),
+    );
+
+    // psub16 rd=x0 硬连线：写入必须被丢弃（0x0220900B = funct7=1, funct3=1, rd=0）
+    run_test_exec_decode(
+        0x0220_900B,
+        |builder| builder.reg(1, 0x0001_0002).reg(2, 0x0003_0004),
+        |checker| checker.reg(0, 0),
+    );
+
+    // padd16 通道独立性：低泳道溢出回绕不影响高泳道
+    // 0xFFFF + 0x0002 = 0x0001 (截断)；0x0001 + 0x0000 = 0x0001
+    run_test_exec_decode(
+        0x0020918B,
+        |builder| builder.reg(1, 0x0001_FFFF).reg(2, 0x0000_0002),
+        |checker| checker.reg(3, 0x0001_0001),
+    );
+}

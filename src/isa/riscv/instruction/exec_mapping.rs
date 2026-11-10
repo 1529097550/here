@@ -321,59 +321,11 @@ pub(in crate::isa::riscv) fn get_exec_func(
         #[cfg(feature = "custom-instr")]
         RiscvInstr::PADD8 => exec_arith::<ExecPadd8>,
         #[cfg(feature = "custom-instr")]
-        RiscvInstr::PSUB8 => |info, cpu| {
-            super::normal_exec(cpu, |cpu| {
-                if let RVInstrInfo::R { rs1, rs2, rd } = info {
-                    let (a, b) = cpu.reg_file.read(rs1, rs2);
-                    let sum = packed_lane_op(a, b, 8, true);
-                    log::info!(
-                        "[Custom-Instr] PSUB8 rd=x{}, rs1=x{}, rs2=x{} -> {:#x}",
-                        rd,
-                        rs1,
-                        rs2,
-                        sum
-                    );
-                    cpu.reg_file.write(rd, sum);
-                }
-                Ok(())
-            })
-        },
+        RiscvInstr::PSUB8 => exec_arith::<ExecPsub8>,
         #[cfg(feature = "custom-instr")]
-        RiscvInstr::PADD16 => |info, cpu| {
-            super::normal_exec(cpu, |cpu| {
-                if let RVInstrInfo::R { rs1, rs2, rd } = info {
-                    let (a, b) = cpu.reg_file.read(rs1, rs2);
-                    let sum = packed_lane_op(a, b, 16, false);
-                    log::info!(
-                        "[Custom-Instr] PADD16 rd=x{}, rs1=x{}, rs2=x{} -> {:#x}",
-                        rd,
-                        rs1,
-                        rs2,
-                        sum
-                    );
-                    cpu.reg_file.write(rd, sum);
-                }
-                Ok(())
-            })
-        },
+        RiscvInstr::PADD16 => exec_arith::<ExecPadd16>,
         #[cfg(feature = "custom-instr")]
-        RiscvInstr::PSUB16 => |info, cpu| {
-            super::normal_exec(cpu, |cpu| {
-                if let RVInstrInfo::R { rs1, rs2, rd } = info {
-                    let (a, b) = cpu.reg_file.read(rs1, rs2);
-                    let sum = packed_lane_op(a, b, 16, true);
-                    log::info!(
-                        "[Custom-Instr] PSUB16 rd=x{}, rs1=x{}, rs2=x{} -> {:#x}",
-                        rd,
-                        rs1,
-                        rs2,
-                        sum
-                    );
-                    cpu.reg_file.write(rd, sum);
-                }
-                Ok(())
-            })
-        },
+        RiscvInstr::PSUB16 => exec_arith::<ExecPsub16>,
         #[cfg(feature = "custom-instr")]
         RiscvInstr::MY_INSTR1_DISPLAY => |info, cpu| {
             if let RVInstrInfo::I { rs1: _, rd: _, imm } = info {
@@ -1123,24 +1075,4 @@ pub(in crate::isa::riscv) fn get_exec_func(
         RiscvInstr::VSLIDE1UP_VX => vec_integer_spec_op::<{ vector_spec_instr::SLIDE1UP_VX }>,
         RiscvInstr::VSLIDE1DOWN_VX => vec_integer_spec_op::<{ vector_spec_instr::SLIDE1DOWN_VX }>,
     }
-}
-
-/// packed-SIMD 泳道运算公共实现：低 32 位按 lane_bits 宽度拆分泳道，各泳道独立加/减，进位/借位不跨泳道
-#[cfg(feature = "custom-instr")]
-fn packed_lane_op(a: WordType, b: WordType, lane_bits: u32, is_sub: bool) -> WordType {
-    let lanes = 32 / lane_bits;
-    let lane_mask = ((1u64 << lane_bits) - 1) as WordType;
-    let mut result = 0 as WordType;
-    for i in 0..lanes {
-        let shift = lane_bits * i;
-        let la = (a >> shift) & lane_mask;
-        let lb = (b >> shift) & lane_mask;
-        let r = if is_sub {
-            la.wrapping_sub(lb) & lane_mask
-        } else {
-            la.wrapping_add(lb) & lane_mask
-        };
-        result |= r << shift;
-    }
-    result
 }

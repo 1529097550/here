@@ -937,22 +937,64 @@ where
 //---------------------------------------
 // RV_Custom (custom-instr feature)
 //---------------------------------------
+
+/// packed-SIMD 泳道运算公共实现：低 32 位按 lane_bits 宽度拆分泳道，
+/// 各泳道独立加/减，进位/借位不跨泳道，高 32 位保持 0
+#[cfg(feature = "custom-instr")]
+fn packed_lane_op(a: WordType, b: WordType, lane_bits: u32, is_sub: bool) -> WordType {
+    let lanes = 32 / lane_bits;
+    let lane_mask = ((1u64 << lane_bits) - 1) as WordType;
+    let mut result = 0 as WordType;
+    for i in 0..lanes {
+        let shift = lane_bits * i;
+        let la = (a >> shift) & lane_mask;
+        let lb = (b >> shift) & lane_mask;
+        let r = if is_sub {
+            la.wrapping_sub(lb) & lane_mask
+        } else {
+            la.wrapping_add(lb) & lane_mask
+        };
+        result |= r << shift;
+    }
+    result
+}
+
 #[cfg(feature = "custom-instr")]
 pub(in super::super) struct ExecPadd8;
 
 #[cfg(feature = "custom-instr")]
 impl ExecTrait<Result<WordType, Exception>> for ExecPadd8 {
     fn exec(a: WordType, b: WordType) -> Result<WordType, Exception> {
-        let a_bytes = a.to_le_bytes();
-        let b_bytes = b.to_le_bytes();
-        let mut res = [0u8; std::mem::size_of::<WordType>()];
+        Ok(packed_lane_op(a, b, 8, false))
+    }
+}
 
-        // 低 32 位按 4 条 8-bit 泳道独立相加，进位不跨泳道；
-        // 高 32 位保持 0，与 psub8/padd16/psub16 家族语义一致
-        for i in 0..4 {
-            res[i] = a_bytes[i].wrapping_add(b_bytes[i]);
-        }
+#[cfg(feature = "custom-instr")]
+pub(in super::super) struct ExecPsub8;
 
-        Ok(WordType::from_le_bytes(res))
+#[cfg(feature = "custom-instr")]
+impl ExecTrait<Result<WordType, Exception>> for ExecPsub8 {
+    fn exec(a: WordType, b: WordType) -> Result<WordType, Exception> {
+        Ok(packed_lane_op(a, b, 8, true))
+    }
+}
+
+#[cfg(feature = "custom-instr")]
+pub(in super::super) struct ExecPadd16;
+
+#[cfg(feature = "custom-instr")]
+impl ExecTrait<Result<WordType, Exception>> for ExecPadd16 {
+    fn exec(a: WordType, b: WordType) -> Result<WordType, Exception> {
+        Ok(packed_lane_op(a, b, 16, false))
+    }
+}
+
+#[cfg(feature = "custom-instr")]
+pub(in super::super) struct ExecPsub16;
+
+#[cfg(feature = "custom-instr")]
+impl ExecTrait<Result<WordType, Exception>> for ExecPsub16 {
+    fn exec(a: WordType, b: WordType) -> Result<WordType, Exception> {
+        Ok(packed_lane_op(a, b, 16, true))
     }
 }
