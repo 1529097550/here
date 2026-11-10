@@ -33,6 +33,7 @@ RV_DUMP_PROMPT := RV_DUMP
 RV_OBJCOPY_PROMPT := RV_OBJCOPY
 
 TARGETS += main fib prime matrix_mul vector_kernels io_bench trap_test virtio_blk_test ecall_test interrupt_test float clint uart_interrupt_test custom_padd8 guess
+TARGETS += monitor
 # 双核 litmus 实验：链接时不带 boot.o/trap.o（litmus 自带 _start 与多核入口）
 TARGETS += litmus_mp litmus_mp_fence litmus_sb litmus_sb_fence
 LITMUS_LIBS_OBJ := $(OBJ)/io.o $(OBJ)/power.o
@@ -89,6 +90,20 @@ $(OBJ)/%.o: $(SRC)/%.S
 
 # litmus 双核实验：自带 _start/多核入口，只链 io.o（不用 boot/trap/power）
 $(BIN)/litmus_mp.elf: $(OBJ)/litmus_mp.o $(LITMUS_LIBS_OBJ) linker.ld
+	@ $(call echo_cmd, $(RV_LD_PROMPT), $@)
+	$(Q) mkdir -p $(OBJ) $(BIN)
+	$(Q) $(RV_LD) $(RV_LDFLAG) -T linker.ld -o $@ $(filter %.o,$^)
+
+# M-mode monitor：boot.o(_start) + monitor.c + monitor_trap.S，只链 io/power
+MON_LIBS_OBJ := $(OBJ)/io.o $(OBJ)/power.o
+# monitor.o 单独用不带 v 扩展的 march 编译：GCC 会把大结构体拷贝自动向量化为
+# RVV 指令，而模拟器 mstatus.VS 默认 Off，向量指令将触发非法指令异常
+$(OBJ)/monitor.o: $(SRC)/monitor.c
+	@ $(call echo_cmd, $(RV_CC_PROMPT), $@)
+	$(Q) mkdir -p $(OBJ) $(BIN)
+	$(Q) $(RV_CC) -ffreestanding -nostdlib -march=rv64imfdzicsr -mabi=lp64d -mcmodel=medany -I$(INC) -g -c $< -o $@
+
+$(BIN)/monitor.elf: $(OBJ)/monitor.o $(OBJ)/monitor_trap.o $(OBJ)/boot.o $(MON_LIBS_OBJ) linker.ld
 	@ $(call echo_cmd, $(RV_LD_PROMPT), $@)
 	$(Q) mkdir -p $(OBJ) $(BIN)
 	$(Q) $(RV_LD) $(RV_LDFLAG) -T linker.ld -o $@ $(filter %.o,$^)
