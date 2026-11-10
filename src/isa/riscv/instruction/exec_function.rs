@@ -933,3 +933,26 @@ where
         a >= b
     }
 }
+
+//---------------------------------------
+// RV_Custom (custom-instr feature)
+//---------------------------------------
+#[cfg(feature = "custom-instr")]
+pub(in super::super) struct ExecPadd8;
+
+#[cfg(feature = "custom-instr")]
+impl ExecTrait<Result<WordType, Exception>> for ExecPadd8 {
+    fn exec(a: WordType, b: WordType) -> Result<WordType, Exception> {
+        let a_bytes = a.to_le_bytes();
+        let b_bytes = b.to_le_bytes();
+        let mut res = [0u8; std::mem::size_of::<WordType>()];
+
+        // 低 32 位按 4 条 8-bit 泳道独立相加，进位不跨泳道；
+        // 高 32 位保持 0，与 psub8/padd16/psub16 家族语义一致
+        for i in 0..4 {
+            res[i] = a_bytes[i].wrapping_add(b_bytes[i]);
+        }
+
+        Ok(WordType::from_le_bytes(res))
+    }
+}

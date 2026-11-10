@@ -315,24 +315,11 @@ pub(in crate::isa::riscv) fn get_exec_func(
         //---------------------------------------
         // RV_Custom
         //---------------------------------------
+        //---------------------------------------
+        // RV_Custom
+        //---------------------------------------
         #[cfg(feature = "custom-instr")]
-        RiscvInstr::PADD8 => |info, cpu| {
-            super::normal_exec(cpu, |cpu| {
-                if let RVInstrInfo::R { rs1, rs2, rd } = info {
-                    let (a, b) = cpu.reg_file.read(rs1, rs2);
-                    let sum = packed_lane_op(a, b, 8, false);
-                    log::info!(
-                        "[Custom-Instr] PADD8 rd=x{}, rs1=x{}, rs2=x{} -> {:#x}",
-                        rd,
-                        rs1,
-                        rs2,
-                        sum
-                    );
-                    cpu.reg_file.write(rd, sum);
-                }
-                Ok(())
-            })
-        },
+        RiscvInstr::PADD8 => exec_arith::<ExecPadd8>,
         #[cfg(feature = "custom-instr")]
         RiscvInstr::PSUB8 => |info, cpu| {
             super::normal_exec(cpu, |cpu| {
