@@ -996,3 +996,61 @@ fn test_custom_psub16_decode_and_exec() {
         |checker| checker.reg(3, 0xFFFEFFFE).pc(0x80000004),
     );
 }
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_padd8_backend_execution() {
+    // 构造指令: padd8 x3, x1, x2 -> 0x0020818B
+    let raw_padd8: u32 = 0x0020818B;
+
+    // 用例 1：多通道基础无进位加法
+    run_test_exec_decode(
+        raw_padd8,
+        |builder| builder.reg(1, 0x01020304).reg(2, 0x05060708).pc(0x80000000),
+        |checker| checker.reg(3, 0x06080A0C).pc(0x80000004),
+    );
+
+    // 用例 2：进位隔离与单通道独立溢出截断 (Carry Isolation Test)
+    // byte0: 0x02 + 0xFE = 0x100 -> 0x00 (不能产生进位影响 byte1)
+    // byte1: 0xFE + 0x02 = 0x100 -> 0x00
+    // byte2: 0x01 + 0xFF = 0x100 -> 0x00
+    // byte3: 0xFF + 0x01 = 0x100 -> 0x00
+    run_test_exec_decode(
+        raw_padd8,
+        |builder| builder.reg(1, 0xFF01FE02).reg(2, 0x01FF02FE).pc(0x80000000),
+        |checker| checker.reg(3, 0x00000000).pc(0x80000004),
+    );
+
+    // 用例 3：硬件约束验证——写入 x0 寄存器必须被丢弃
+    // 构造指令: padd8 x0, x1, x2 -> 0x0020800B
+    let raw_padd8_to_x0: u32 = 0x0020800B;
+    run_test_exec_decode(
+        raw_padd8_to_x0,
+        |builder| builder.reg(1, 0x11223344).reg(2, 0x55667788),
+        |checker| checker.reg(0, 0),
+    );
+}
+
+#[test]
+#[cfg(feature = "custom-instr")]
+fn test_custom_padd8_pipeline_step() {
+    let program = [
+        0x00500093, // addi x1, x0, 5    (x1 = 5)
+        0x00a00113, // addi x2, x0, 10   (x2 = 10)
+        0x0020818B, // padd8 x3, x1, x2  (x3 = 15)
+        0x0031820B, // padd8 x4, x3, x3  (x4 = 30)
+    ];
+
+    run_test_cpu_step(
+        &program,
+        |builder| builder.pc(ram_config::BASE_ADDR),
+        |checker| {
+            checker
+                .reg(1, 5)
+                .reg(2, 10)
+                .reg(3, 15)
+                .reg(4, 30)
+                .pc(ram_config::BASE_ADDR + 16)
+        },
+    );
+}
