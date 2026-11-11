@@ -17,7 +17,7 @@
     // 定义chosen子节点，用于传递输入参数
 	chosen {
 		stdout-path = "/soc/uart0@10000000";  // 定义系统标准输出stdout节点
-		bootargs = "console=ttyS0 earlycon=sbi initcall_debug";
+		bootargs = "root=/dev/vda rw console=ttyS0 earlycon=sbi";
 	};
 
 	memory@80000000 {
