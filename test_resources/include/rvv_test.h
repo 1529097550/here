@@ -332,6 +332,50 @@ static inline void rvv_slidedown1_i32(int32_t* dst, const int32_t* src, size_t n
     rvv_store_i32_v24(dst);
 }
 
+/* 整型矩阵乘法（4×4 GEMM）：C = A × B，其中 C[i][j] = sum_k A[i][k] * B[k][j]
+ * 向量化思路：C 的第 i 行 = Σ_k A[i][k] ×（B 的第 k 行）。
+ * B 的每行 4 个 int32 恰好占满 e32/m1 配置下的一个向量（VLEN=128bit，VLMAX=4），
+ * 因此用向量-标量乘加 vwmacc.vx 把标量 A[i][k] 与整行 B[k] 的乘积一次性累加进
+ * 64 位向量累加器（widen 化避免 32 位中间溢出），最后 vnclip 收窄回 32 位存入 C。
+ * 相比标量三重嵌套循环（64 次乘加逐个做），每行只需 4 条向量乘加即可并行算出
+ * 16 个结果元素中的 4 个。
+ *
+ * 寄存器分配（e32/m1 下每个向量寄存器组占 1 个寄存器）：
+ *   v8      —— B 的当前行（4×i32 = 128bit）
+ *   v24-v25 —— 64 位累加器（e64/m2 双寄存器组，4×i64 = 256bit）
+ *   v26     —— 收窄后的 C 行（4×i32）
+ */
+static inline void
+rvv_matrix_mul_4x4_i32(const int32_t a[4][4], const int32_t b[4][4], int32_t c[4][4]) {
+    size_t vl;
+    for (size_t i = 0; i < 4; ++i) {
+        /* 1. 配置 e64/m2 并清零 64 位累加器：avl=4 恰为 e64/m2 的 VLMAX，
+         *    vmv.v.i 广播 0 到 v24/v25 全部 4 个 64bit lane */
+        asm volatile("vsetvli %0, %1, e64, m2, ta, ma" : "=r"(vl) : "r"((size_t)4));
+        asm volatile("vmv.v.i v24, 0");
+
+        /* 2. 切回 e32/m1：SEW=32 与源数据宽度一致；vwmacc 的目的寄存器组
+         *    会自动按 2*SEW=64 解释（EMUL 翻倍为 m2，即 v24-v25） */
+        asm volatile("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vl) : "r"((size_t)4));
+
+        for (size_t k = 0; k < 4; ++k) {
+            /* 加载 B 的第 k 行（4 个 int32）入 v8 */
+            asm volatile("vle32.v v8, (%0)" : : "r"(b[k]) : "memory");
+            /* 取标量 A[i][k]，与整行 B[k] 做乘加（一次算 4 个 64bit 乘积）：
+             * v24 的每个 64bit lane += sign_ext(A[i][k]) * sign_ext(v8 对应 lane) */
+            int32_t aik = a[i][k];
+            asm volatile("vwmacc.vx v24, %0, v8" : : "r"(aik) : "memory");
+        }
+
+        /* 3. 收窄：vnclip.wi 把 2*SEW(64) 的 v24 组按立即数 0 右移后饱和截断为
+         *    SEW(32) 写入 v26；移位量为 0 即纯窄化，测试值保证不触发饱和 */
+        asm volatile("vnclip.wi v26, v24, 0" ::: "memory");
+
+        /* 4. 整行（4 个 int32）一次性存回 C[i] */
+        asm volatile("vse32.v v26, (%0)" : : "r"(c[i]) : "memory");
+    }
+}
+
 static inline void
 rvv_gather_i32(int32_t* dst, const int32_t* src, const uint32_t* index, size_t n) {
     while (n) {
