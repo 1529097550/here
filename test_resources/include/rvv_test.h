@@ -275,6 +275,49 @@ rvv_dot_i32(int32_t* tmp, const int32_t* a, const int32_t* b, size_t n) {
     }
 }
 
+/* 整型向量点积：DotProduct(A,B) = sum(A[i] * B[i])
+ * 采用"向量累加器 + 标量水平归约"方案：
+ *  1. 主循环内用 vmacc.vv 把当前块逐 lane 乘积累加进 v3（模拟器未实现
+ *     vredsum.vs 归约指令，无法在向量寄存器内部完成整个求和）；
+ *  2. 循环结束后用 vslidedown.vx + vmv.x.s 逐 lane 取出 v3 的 VLMAX 个
+ *     元素，在标量寄存器里完成最终求和。
+ * 注意：主循环的 vsetvli 必须用 tu/mu 尾部策略——当剩余元素不足 VLMAX
+ * 时，尾部 lane 属于 tail 元素，tu 保证 v3 中上一次迭代已经累加的值
+ * 不会被破坏（若用 ta/ma，尾部 lane 的旧值可能被改写导致结果错误）。 */
+static inline int32_t
+vector_dot_product_int32(const int32_t* a, const int32_t* b, size_t n) {
+    int32_t sum = 0;
+    size_t vl, vlmax;
+
+    /* 请求 VLMAX：模拟器实现为 vl = min(avl, VLMAX)，传入最大 AVL 即得
+     * 当前配置（e32, m1）下的最大向量长度 */
+    asm volatile("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vlmax) : "r"(~(size_t)0));
+
+    /* 清零累加向量 v3（vmv.v.i：立即数 0 广播到整个向量寄存器） */
+    asm volatile("vmv.v.i v3, 0");
+
+    for (; n > 0; a += vl, b += vl, n -= vl) {
+        /* 动态配置向量长度：SEW=32, LMUL=1，返回本块实际处理的元素数 */
+        asm volatile("vsetvli %0, %1, e32, m1, tu, mu" : "=r"(vl) : "r"(n));
+
+        /* 将数组 a、b 当前块加载入向量寄存器 v1、v2 */
+        asm volatile("vle32.v v1, (%0)" : : "r"(a) : "memory");
+        asm volatile("vle32.v v2, (%0)" : : "r"(b) : "memory");
+
+        /* 乘积累加：v3[i] = v1[i] * v2[i] + v3[i] */
+        asm volatile("vmacc.vv v3, v1, v2" ::: "memory");
+    }
+
+    /* 水平归约：vslidedown.vx 把 v3 中第 i 个 lane 滑到 v4 的 lane 0，
+     * 再用 vmv.x.s 读回标量寄存器 */
+    for (size_t i = 0; i < vlmax; ++i) {
+        int32_t lane;
+        asm volatile("vslidedown.vx v4, v3, %1\n\tvmv.x.s %0, v4" : "=r"(lane) : "r"(i));
+        sum += lane;
+    }
+    return sum;
+}
+
 static inline void rvv_slideup1_i32(int32_t* dst, const int32_t* src, size_t n) {
     size_t vl = rvv_vsetvl_e32m1(n);
     rvv_load_i32_v8(src);
